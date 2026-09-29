@@ -127,7 +127,7 @@ with tab_cust:
 
     if st.button("Draft credit memo", type="primary"):
         with st.spinner("Drafting memo from the 360 data, score and RM notes..."):
-            memo = session.sql(f"SELECT {DB}.AI.GENERATE_CREDIT_MEMO('{cid}')").collect()[0][0]
+            memo = session.call(f"{DB}.AI.GENERATE_CREDIT_MEMO", cid)
         st.markdown(memo)
         st.caption("AI draft for credit committee review. Verify figures against source systems.")
 
@@ -175,8 +175,9 @@ with tab_ask:
 
 # ---------------- Governance ----------------
 with tab_gov:
-    st.caption("Same table, different roles. Masking and row access policies are enforced by Snowflake, "
-               "so every tool (SQL, BI, this app, the agent) sees the same protection.")
+    st.caption("Consumers only get secure views that mask by role and filter RMs to their own portfolio, "
+               "so SQL, BI, the agent and Cortex Analyst all see the same protection. "
+               "Run the persona queries in Section 16 of setup.sql to see each role live.")
     role = st.radio("Simulate role", ["CREDIT_ANALYST", "RM_USER", "DATA_ENGINEER", "AUDITOR"], horizontal=True)
     sql = (f"EXECUTE USING POLICY_CONTEXT(CURRENT_ROLE => '{role}') AS "
            f"SELECT CUSTOMER_ID, RM_ID, SSM_REG_NO, CTOS_SCORE, TOTAL_OUTSTANDING_MYR "
@@ -185,10 +186,8 @@ with tab_gov:
         st.dataframe(session.sql(sql).to_pandas(), hide_index=True, use_container_width=True)
     except Exception as e:  # policy simulation needs policy-owner privileges
         st.info(f"Run the persona queries in Section 16 of setup.sql to see this live. ({str(e)[:120]})")
-    st.markdown("**Sensitive columns catalogued by tag**")
-    st.dataframe(q(f"""SELECT OBJECT_NAME, COLUMN_NAME, TAG_NAME, TAG_VALUE
-                       FROM TABLE({DB}.INFORMATION_SCHEMA.TAG_REFERENCES_ALL_COLUMNS('{DB}.GOLD.CUSTOMER_360', 'table'))"""),
-                 hide_index=True, use_container_width=True)
+    st.markdown("**PII inventory and controls**")
+    st.dataframe(q(f"SELECT * FROM {DB}.GOV.PII_INVENTORY"), hide_index=True, use_container_width=True)
     st.markdown("**Entity resolution outcome**")
     st.dataframe(q(f"""SELECT SOURCE_SYSTEM, MATCH_RULE, COUNT(*) RECORDS FROM {DB}.SILVER.ENTITY_XREF
                        GROUP BY 1, 2 ORDER BY 1, 2"""), hide_index=True)
