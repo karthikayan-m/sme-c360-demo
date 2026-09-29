@@ -1,0 +1,76 @@
+flowchart LR
+  subgraph S[Source systems]
+    CORE[Core banking<br/>customers, accounts, repayments]
+    LOS[Loan origination<br/>applications, loans]
+    SSM[SSM registry]
+    BUR[CTOS / CCRIS<br/>bureau JSON]
+    CRM[CRM / KYC<br/>directors, RM notes]
+    TF[Trade finance<br/>LC, invoices]
+    PSW[Payment switch + merchant acquiring<br/>DuitNow, IBG, RENTAS, QR]
+  end
+
+  subgraph I[Ingestion]
+    STG[(Internal stage @LANDING<br/>prod: S3 + Snowpipe AUTO_INGEST)]
+    COPY[COPY INTO<br/>MATCH_BY_COLUMN_NAME + lineage cols]
+    STRM[Event producer<br/>prod: Kafka connector / Snowpipe Streaming / Openflow]
+  end
+
+  subgraph B[RAW - bronze]
+    RAWT[CSV tables + VARIANT JSON]
+    RAWE[TXN_EVENTS_RAW]
+    ST[[Stream: TXN_EVENTS_STREAM]]
+  end
+
+  subgraph SV[SILVER - conformed]
+    NORM[Normalise SSM / MyKad / names<br/>SQL UDFs]
+    ER[Entity resolution<br/>SSM exact, old-to-new SSM, Jaro-Winkler]
+    RP[Related-party graph<br/>shared director / guarantor NRIC]
+    TXS[TXN_EVENTS<br/>Task every 1 min]
+  end
+
+  subgraph G[GOLD - Customer 360]
+    DIM[DIM_CUSTOMER, DIM_DIRECTOR]
+    FACT[FACT_LOAN, FACT_APPLICATION]
+    DT[FACT_TXN_DAILY<br/>Dynamic Table lag 1 min]
+    C360[CUSTOMER_360<br/>daily Task graph]
+  end
+
+  subgraph M[ML - Snowflake ML]
+    TRAIN[XGBoost PD model<br/>Python stored proc]
+    REG[(Model Registry<br/>SME_PD_MODEL)]
+    PD[PD_SCORES<br/>band, EWS flag, reason codes, NBA]
+  end
+
+  subgraph A[AI - Cortex]
+    ENR[SENTIMENT + CLASSIFY_TEXT on RM notes<br/>COMPLETE extraction of TF docs]
+    MEMO[GENERATE_CREDIT_MEMO UDF]
+    SRCH[Cortex Search<br/>RM notes + TF docs]
+    SEMV[Semantic view<br/>Cortex Analyst]
+    AGT[Cortex Agent<br/>SME Credit Copilot]
+  end
+
+  subgraph GOVN[Governance - Horizon]
+    TAGS[Tags PII_TYPE / DATA_SENSITIVITY]
+    MASK[Tag-based masking<br/>NRIC, SSM, financials, CTOS]
+    RAP[Row access: RM portfolio]
+    RBAC[RBAC personas]
+  end
+
+  subgraph U[Consumers]
+    APP[Streamlit in Snowflake<br/>RM / credit / CRO]
+    SI[Snowflake Intelligence]
+  end
+
+  CORE & LOS & SSM & BUR & CRM & TF --> STG --> COPY --> RAWT
+  PSW --> STRM --> RAWE --> ST --> TXS
+  RAWT --> NORM --> ER --> RP
+  ER --> DIM & FACT
+  TXS --> DT
+  RAWT --> ENR
+  DIM & FACT & DT & RP & ENR --> C360
+  C360 --> TRAIN --> REG --> PD
+  C360 & PD --> MEMO & SEMV
+  ENR --> SRCH
+  SEMV & SRCH & MEMO --> AGT --> SI
+  C360 & PD & MEMO & SEMV --> APP
+  GOVN -. enforced on .-> B & SV & G & M
